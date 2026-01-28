@@ -4,21 +4,20 @@ public class NoteBlock : MonoBehaviour
 {
     public enum NoteType
     {
-        Whole,      // 4拍
-        Half,       // 2拍
-        Quarter,    // 1拍
-        Eighth,     // 0.5拍
-        Sixteenth   // 0.25拍
+        Whole,
+        Half,
+        Quarter,
+        Eighth,
+        Sixteenth
     }
 
-    public NoteType noteType = NoteType.Quarter;  // 默认是四分音符
+    public NoteType noteType = NoteType.Quarter;
     public float triggerDistance = 0.05f;
-    public bool hasTriggered = false;
     public ScannerLineMover scanner;
     public GameObject basePlane;
 
-    private float planeMinZ;
-    private float planeMaxZ;
+    private bool hasTriggered = false;
+    private bool insideScannerPlane = false;
 
     private Vector3 originalScale;
     private Vector3 targetScale;
@@ -26,30 +25,24 @@ public class NoteBlock : MonoBehaviour
     private float scaleTimer = 0f;
     private bool isScaling = false;
 
-    public float earlyTriggerOffset = 0.01f;  // 可以调，比如 0.01 ~ 0.05
+    public float earlyTriggerOffset = 0.01f;
 
-    public ParticleSystem noteParticles; 
+    public ParticleSystem noteParticles;
+
     void Start()
     {
         originalScale = transform.localScale;
-
-        if (basePlane != null)
-        {
-            Renderer renderer = basePlane.GetComponent<Renderer>();
-            Bounds bounds = renderer.bounds;
-            planeMinZ = bounds.min.z;
-            planeMaxZ = bounds.max.z;
-        }
     }
 
     void Update()
     {
         if (scanner == null || basePlane == null) return;
 
+        // 门禁：不在 ScannerPlane 内直接退出
+        if (!insideScannerPlane) return;
+
         float scannerZ = scanner.transform.position.z + earlyTriggerOffset;
         float noteZ = transform.position.z;
-
-        if (noteZ < planeMinZ || noteZ > planeMaxZ) return;
 
         float distance = Mathf.Abs(noteZ - scannerZ);
 
@@ -59,15 +52,18 @@ public class NoteBlock : MonoBehaviour
             TriggerNote();
         }
 
-        if (distance > triggerDistance * 2)
+        // 防止抖动重复触发
+        if (distance > triggerDistance * 2f)
         {
             hasTriggered = false;
         }
 
+        // 缩放动画
         if (isScaling)
         {
             scaleTimer += Time.deltaTime;
             float t = scaleTimer / scaleLerpTime;
+
             transform.localScale = Vector3.Lerp(targetScale, originalScale, t);
 
             if (t >= 1f)
@@ -78,36 +74,49 @@ public class NoteBlock : MonoBehaviour
         }
     }
 
+    void OnTriggerEnter(Collider other)
+    {
+        if (other.gameObject == basePlane)
+        {
+            insideScannerPlane = true;
+        }
+    }
+
+    void OnTriggerExit(Collider other)
+    {
+        if (other.gameObject == basePlane)
+        {
+            insideScannerPlane = false;
+        }
+    }
+
     void TriggerNote()
     {
-        targetScale = originalScale * 1.3f;  // 放大30%
+        targetScale = originalScale * 1.3f;
         scaleTimer = 0f;
         isScaling = true;
+
         float bpm = scanner.bpm;
-        float beatDuration = 60f / bpm; // 单拍（四分音符）的秒数
+        float beatDuration = 60f / bpm;
         float multiplier = GetNoteMultiplier(noteType);
         float noteDuration = beatDuration * multiplier;
-        int durationMs = Mathf.RoundToInt(noteDuration * 1000);
 
-        Debug.Log(noteType + " triggered! Duration (ms): " + durationMs);
+        int durationMs = Mathf.RoundToInt(noteDuration * 1000f);
+
+        Debug.Log(noteType + " triggered, duration(ms): " + durationMs);
 
         ESP32Client.Instance?.SendVibrationDuration(durationMs);
 
         if (noteParticles != null)
         {
-            // 停止粒子系统
             noteParticles.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
 
-            // ✅ 再设置 duration / startLifetime
             var main = noteParticles.main;
             main.duration = noteDuration;
-            main.startLifetime = noteDuration*2;
+            main.startLifetime = noteDuration * 2f;
 
-            // ✅ 最后再播放
             noteParticles.Play();
         }
-
-        // + arduino
     }
 
     float GetNoteMultiplier(NoteType type)
